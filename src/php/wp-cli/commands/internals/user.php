@@ -199,58 +199,61 @@ class User_Command extends WP_CLI_Command {
 	}
 
 	/**
-	 * Add a user to a blog
+	 * Import users from a CSV
 	 *
-	 * @param array $args
-	 * @param array $assoc_args
-	 **/
-	public function add_to_blog( $args, $assoc_args ) {
+	 * @synopsis <file>
+	 */
+	public function import_csv( $args, $assoc_args ) {
 
-		$defaults = array(
-				'id_or_login'      => $args[0],
-				'role'             => $args[1],
+		list( $csv ) = $args;
+
+		$new_users = \WP_CLI\utils\parse_csv( $csv );
+		
+		$blog_users = get_users();
+
+		foreach( $new_users as $new_user ) {
+
+			$defaults = array(
+				'role' => get_option('default_role'),
+				'user_pass' => wp_generate_password(),
+				'user_registered' => strftime( "%F %T", time() ),
+				'display_name' => false,
 			);
-		$args = array_merge( $assoc_args, $defaults );
+			$new_user = array_merge( $new_user, $defaults );
 
-		if ( is_numeric( $args['id_or_login'] ) )
-			$user = get_user_by( 'id', $args['id_or_login'] );
-		else
-			$user = get_user_by( 'login', $args['id_or_login'] );
+			if ( 'none' == $new_user['role'] ) {
+				$new_user['role'] = false;
+			} elseif ( is_null( get_role( $new_user['role'] ) ) ) {
+				WP_CLI::warning( "{$new_user['user_login']} has an invalid role" );
+				continue;
+			}
 
-		if ( empty( $args['id_or_login'] ) || empty( $user ) )
-			WP_CLI::error( "Please specify a valid user ID or user login to add to this blog" );
+			// User already exists and we just need to add them to the site if they aren't already there
+			if ( $existing_user = get_user_by( 'login', $new_user['user_login'] ) ) {
+				if ( in_array( $new_user['user_login'], wp_list_pluck( $blog_users, 'user_login' ) ) )
+					WP_CLI::warning( "{$new_user['user_login']} already is a member of blog" );
+				else if ( $new_user['role'] ) {
+					add_user_to_blog( get_current_blog_id(), $new_user['user_login'], $new_user['role'] );
+					WP_CLI::line( "{$new_user['user_login']} added to blog as {$new_user['role']}" );
+				} else {
+					WP_CLI::line( "{$new_user['user_login']} exists, but won't be added to the blog" );
+				}
+				continue;
+			}
 
-		global $wp_roles;
-		if ( empty( $args['role'] ) || ! array_key_exists( $args['role'], $wp_roles->roles ) )
-			$args['role'] = get_option( 'default_role' );
+			$user_id = wp_insert_user( $new_user );
 
-		add_user_to_blog( get_current_blog_id(), $user->ID, $args['role'] );
-		WP_CLI::success( "Added {$user->user_login} ({$user->ID}) to " . site_url() . " as {$args['role']}" );
+			if ( is_wp_error( $user_id ) ) {
+				WP_CLI::warning( $user_id );
+			} else {
+				if ( false === $new_user['role'] ) {
+					delete_user_option( $user_id, 'capabilities' );
+					delete_user_option( $user_id, 'user_level' );
+				}
+			}
+
+			WP_CLI::line( "{$new_user['user_login']} created" );
+
+		}
 	}
-
-	/**
-	 * Remove a user from a blog
-	 *
-	 * @param array $args
-	 * @param array $assoc_args
-	 **/
-	public function remove_from_blog( $args, $assoc_args ) {
-
-		$defaults = array(
-				'id_or_login'      => $args[0],
-			);
-		$args = array_merge( $assoc_args, $defaults );
-
-		if ( is_numeric( $args['id_or_login'] ) )
-			$user = get_user_by( 'id', $args['id_or_login'] );
-		else
-			$user = get_user_by( 'login', $args['id_or_login'] );
-
-		if ( empty( $args['id_or_login'] ) || empty( $user ) )
-			WP_CLI::error( "Please specify a valid user ID or user login to remove from this blog" );
-
-		remove_user_from_blog( $user->ID, get_current_blog_id() );
-		WP_CLI::success( "Removed {$user->user_login} ({$user->ID}) from " . site_url() );
-	}
-
 }
