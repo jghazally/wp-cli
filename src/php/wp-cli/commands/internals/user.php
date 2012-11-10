@@ -11,11 +11,11 @@ WP_CLI::add_command('user', 'User_Command');
 class User_Command extends WP_CLI_Command {
 
 	/**
-	 * List users
+	 * List users.
 	 *
-	 * @param array $args
-	 * @param array $assoc_args
-	 **/
+	 * @subcommand list
+	 * @synopsis [--role=<role>]
+	 */
 	public function _list( $args, $assoc_args ) {
 		global $blog_id;
 
@@ -28,10 +28,11 @@ class User_Command extends WP_CLI_Command {
 			$params['role'] = $assoc_args['role'];
 		}
 
-		$table = new \cli\Table();
 		$users = get_users( $params );
 		$fields = array('ID', 'user_login', 'display_name', 'user_email',
 			'user_registered');
+
+		$table = new \cli\Table();
 
 		$table->setHeaders( array_merge($fields, array('roles')) );
 
@@ -52,15 +53,14 @@ class User_Command extends WP_CLI_Command {
 	}
 
 	/**
-	 * Delete a user
+	 * Delete a user.
 	 *
-	 * @param array $args
-	 * @param array $assoc_args
-	 **/
+	 * @synopsis <id> [--reassign=<id>]
+	 */
 	public function delete( $args, $assoc_args ) {
 		global $blog_id;
 
-		$user_id = WP_CLI::get_numeric_arg( $args, 0, "User ID" );
+		list( $user_id ) = $args;
 
 		$defaults = array( 'reassign' => NULL );
 
@@ -74,17 +74,12 @@ class User_Command extends WP_CLI_Command {
 	}
 
 	/**
-	 * Create a user
+	 * Create a user.
 	 *
-	 * @param array $args
-	 * @param array $assoc_args
-	 **/
+	 * @synopsis <user-login> <user-email> [--role=<role>] [--porcelain]
+	 */
 	public function create( $args, $assoc_args ) {
 		global $blog_id;
-
-		if ( count( $args ) < 2 ) {
-			WP_CLI::error( "Login and email required." );
-		}
 
 		list( $user_login, $user_email ) = $args;
 
@@ -128,13 +123,12 @@ class User_Command extends WP_CLI_Command {
 	}
 
 	/**
-	 * Update a user
+	 * Update a user.
 	 *
-	 * @param array $args
-	 * @param array $assoc_args
-	 **/
+	 * @synopsis <id> --<field>=<value>
+	 */
 	public function update( $args, $assoc_args ) {
-		$user_id = WP_CLI::get_numeric_arg( $args, 0, "User ID" );
+		list( $user_id ) = $args;
 
 		if ( empty( $assoc_args ) ) {
 			WP_CLI::error( "Need some fields to update." );
@@ -151,13 +145,11 @@ class User_Command extends WP_CLI_Command {
 		}
 	}
 
-
 	/**
-	 * Generate users
+	 * Generate users.
 	 *
-	 * @param array $args
-	 * @param array $assoc_args
-	 **/
+	 * @synopsis [--count=100] [--role=<role>]
+	 */
 	public function generate( $args, $assoc_args ) {
 		global $blog_id;
 
@@ -207,53 +199,63 @@ class User_Command extends WP_CLI_Command {
 	}
 
 	/**
-	 * Add a user to a blog.
+	 * Import users from a CSV
 	 *
-	 * @subcommand set-role
-	 * @synopsis <user-login> [<role>] [--blog=<blog>]
+	 * @subcommand import-csv
+	 * @synopsis <file>
 	 */
-	public function set_role( $args, $assoc_args ) {
-		$user = self::get_user_from_first_arg( $args[0] );
+	public function import_csv( $args, $assoc_args ) {
 
-		$role = isset( $args[1] ) ? $args[1] : get_option( 'default_role' );
+		list( $csv ) = $args;
 
-		// Multisite
-		if ( function_exists( 'add_user_to_blog' ) )
-			add_user_to_blog( get_current_blog_id(), $user->ID, $role );
-		else
-			$user->set_role( $role );
+		$new_users = \WP_CLI\utils\parse_csv( $csv );
+		
+		$blog_users = get_users();
 
-		WP_CLI::success( "Added {$user->user_login} ({$user->ID}) to " . site_url() . " as {$role}" );
-	}
+		foreach( $new_users as $new_user ) {
 
-	/**
-	 * Remove a user from a blog.
-	 *
-	 * @subcommand remove-role
-	 * @synopsis <user-login>
-	 */
-	public function remove_role( $args, $assoc_args ) {
-		$user = self::get_user_from_first_arg( $args[0] );
+			$defaults = array(
+				'role' => get_option('default_role'),
+				'user_pass' => wp_generate_password(),
+				'user_registered' => strftime( "%F %T", time() ),
+				'display_name' => false,
+			);
+			$new_user = array_merge( $defaults, $new_user );
 
-		// Multisite
-		if ( function_exists( 'remove_user_from_blog' ) )
-			remove_user_from_blog( $user->ID, get_current_blog_id() );
-		else
-			$user->remove_all_caps();
+			if ( 'none' == $new_user['role'] ) {
+				$new_user['role'] = false;
+			} elseif ( is_null( get_role( $new_user['role'] ) ) ) {
+				WP_CLI::warning( "{$new_user['user_login']} has an invalid role" );
+				continue;
+			}
 
-		WP_CLI::success( "Removed {$user->user_login} ({$user->ID}) from " . site_url() );
-	}
+			// User already exists and we just need to add them to the site if they aren't already there
+			if ( $existing_user = get_user_by( 'email', $new_user['user_email'] ) ) {
+				if ( in_array( $new_user['user_login'], wp_list_pluck( $blog_users, 'user_login' ) ) )
+					WP_CLI::warning( "{$new_user['user_login']} already is a member of blog" );
+				else if ( $new_user['role'] ) {
+					add_user_to_blog( get_current_blog_id(), $new_user['user_login'], $new_user['role'] );
+					WP_CLI::line( "{$new_user['user_login']} added to blog as {$new_user['role']}" );
+				} else {
+					WP_CLI::line( "{$new_user['user_login']} exists, but won't be added to the blog" );
+				}
+				continue;
+			}
 
-	private static function get_user_from_first_arg( $id_or_login ) {
-		if ( is_numeric( $id_or_login ) )
-			$user = get_user_by( 'id', $id_or_login );
-		else
-			$user = get_user_by( 'login', $id_or_login );
+			$user_id = wp_insert_user( $new_user );
 
-		if ( ! $user )
-			WP_CLI::error( "Please specify a valid user ID or user login to remove from this blog" );
+			if ( is_wp_error( $user_id ) ) {
+				WP_CLI::warning( $user_id );
+				continue;
+			} else {
+				if ( false === $new_user['role'] ) {
+					delete_user_option( $user_id, 'capabilities' );
+					delete_user_option( $user_id, 'user_level' );
+				}
+			}
 
-		return $user;
+			WP_CLI::line( "{$new_user['user_login']} created" );
+
+		}
 	}
 }
-
