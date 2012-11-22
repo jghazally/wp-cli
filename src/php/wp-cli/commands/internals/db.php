@@ -10,10 +10,6 @@ WP_CLI::add_command( 'db', 'DB_Command' );
  */
 class DB_Command extends WP_CLI_Command {
 
-	public static function get_default_subcommand() {
-		return 'cli';
-	}
-
 	/**
 	 * Create the database, as specified in wp-config.php
 	 */
@@ -89,6 +85,9 @@ class DB_Command extends WP_CLI_Command {
 
 	/**
 	 * Print a string for connecting to the DB.
+	 *
+	 * @subcommand connect-str
+	 * @subcommand connect
 	 */
 	function connect() {
 		WP_CLI::line( $this->connect_string() );

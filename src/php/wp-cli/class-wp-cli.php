@@ -10,7 +10,8 @@ use \WP_CLI\Utils;
  */
 class WP_CLI {
 
-	private static $commands = array();
+	public static $root;
+
 	private static $man_dirs = array();
 	private static $arguments, $assoc_args, $assoc_special;
 
@@ -21,12 +22,7 @@ class WP_CLI {
 	 * @param string|object $implementation The command implementation
 	 */
 	static function add_command( $name, $implementation ) {
-		if ( is_string( $implementation ) )
-			$command = new Dispatcher\CompositeCommand( $name, $implementation );
-		else
-			$command = new Dispatcher\SingleCommand( $name, $implementation );
-
-		self::$commands[ $name ] = $command;
+		self::$root->add_command( $name, $implementation );
 	}
 
 	static function add_man_dir( $dest_dir, $src_dir ) {
@@ -197,38 +193,24 @@ class WP_CLI {
 		return $r;
 	}
 
-	static function load_all_commands() {
-		foreach ( array( 'internals', 'community' ) as $dir ) {
-			foreach ( glob( WP_CLI_ROOT . "/commands/$dir/*.php" ) as $filename ) {
-				$command = substr( basename( $filename ), 0, -4 );
+	private static function parse_args() {
+		$r = Utils\parse_args( array_slice( $GLOBALS['argv'], 1 ) );
 
-				if ( isset( self::$commands[ $command ] ) )
-					continue;
+		list( self::$arguments, self::$assoc_args ) = $r;
 
-				include $filename;
-			}
+		if ( isset( self::$assoc_args['help'] ) ) {
+			array_unshift( self::$arguments, 'help' );
+			unset( self::$assoc_args['help'] );
 		}
 
-		return self::$commands;
+		self::$assoc_special = Utils\split_assoc( self::$assoc_args, array(
+			'path', 'url', 'blog', 'user', 'require',
+			'quiet', 'completions', 'man', 'syn-list'
+		) );
 	}
 
-	static function load_command( $command ) {
-		if ( !isset( self::$commands[$command] ) ) {
-			foreach ( array( 'internals', 'community' ) as $dir ) {
-				$path = WP_CLI_ROOT . "/commands/$dir/$command.php";
-
-				if ( is_readable( $path ) ) {
-					include $path;
-					break;
-				}
-			}
-		}
-
-		if ( !isset( self::$commands[$command] ) ) {
-			return false;
-		}
-
-		return self::$commands[$command];
+	static function get_assoc_special() {
+		return self::$assoc_special;
 	}
 
 	static function before_wp_load() {
@@ -237,20 +219,19 @@ class WP_CLI {
 			WP_CLI_ROOT . "../../docs/"
 		);
 
-		$r = Utils\parse_args( array_slice( $GLOBALS['argv'], 1 ) );
-
-		list( self::$arguments, self::$assoc_args ) = $r;
-
-		self::$assoc_special = Utils\split_assoc( self::$assoc_args, array(
-			'path', 'url', 'blog', 'user', 'require',
-			'quiet', 'completions', 'man', 'syn-list'
-		) );
+		self::parse_args();
 
 		define( 'WP_CLI_QUIET', isset( self::$assoc_special['quiet'] ) );
 
 		// Handle --version parameter
 		if ( isset( self::$assoc_args['version'] ) && empty( self::$arguments ) ) {
 			self::line( 'wp-cli ' . WP_CLI_VERSION );
+			exit;
+		}
+
+		// Handle --info parameter
+		if ( isset( self::$assoc_args['info'] ) && empty( self::$arguments ) ) {
+			self::show_info();
 			exit;
 		}
 
@@ -289,10 +270,6 @@ class WP_CLI {
 		}
 	}
 
-	static function get_assoc_special() {
-		return self::$assoc_special;
-	}
-
 	static function after_wp_load() {
 		add_filter( 'filesystem_method', function() { return 'direct'; }, 99 );
 
@@ -311,8 +288,8 @@ class WP_CLI {
 
 		// Handle --syn-list parameter
 		if ( isset( self::$assoc_special['syn-list'] ) ) {
-			foreach ( self::load_all_commands() as $command ) {
-				if ( $command instanceof \WP_CLI\Dispatcher\Composite ) {
+			foreach ( self::$root->get_subcommands() as $command ) {
+				if ( $command instanceof Dispatcher\Composite ) {
 					foreach ( $command->get_subcommands() as $subcommand )
 						$subcommand->show_usage( '' );
 				} else {
@@ -331,9 +308,18 @@ class WP_CLI {
 	}
 
 	private static function run_command() {
-		$root = new Dispatcher\RootCommand;
+		$command = Dispatcher\traverse( self::$arguments, 'pre_invoke' );
+		$command->invoke( self::$arguments, self::$assoc_args );
+	}
 
-		$root->invoke( self::$arguments, self::$assoc_args );
+	private static function show_info() {
+		$php_bin = defined( 'PHP_BINARY' ) ? PHP_BINARY : getenv( 'WP_CLI_PHP_USED' );
+
+		WP_CLI::line( "PHP binary:\t" . $php_bin );
+		WP_CLI::line( "PHP version:\t" . PHP_VERSION );
+		WP_CLI::line( "php.ini used:\t" . get_cfg_var( 'cfg_file_path' ) );
+		WP_CLI::line( "wp-cli root:\t" . WP_CLI_ROOT );
+		WP_CLI::line( "wp-cli version:\t" . WP_CLI_VERSION );
 	}
 
 	private static function generate_man( $args ) {
@@ -347,7 +333,7 @@ class WP_CLI {
 	}
 
 	private static function render_automcomplete() {
-		foreach ( self::load_all_commands() as $name => $command ) {
+		foreach ( self::$root->get_subcommands() as $name => $command ) {
 			$subcommands = $command->get_subcommands();
 
 			self::line( $name . ' ' . implode( ' ', array_keys( $subcommands ) ) );
@@ -359,4 +345,6 @@ class WP_CLI {
 		self::add_command( $name, $class );
 	}
 }
+
+WP_CLI::$root = new Dispatcher\RootCommand;
 

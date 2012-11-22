@@ -2,10 +2,6 @@
 
 abstract class WP_CLI_Command_With_Upgrade extends WP_CLI_Command {
 
-	public static function get_default_subcommand() {
-		return 'status';
-	}
-
 	protected $item_type;
 	protected $upgrader;
 	protected $upgrade_refresh;
@@ -39,7 +35,10 @@ abstract class WP_CLI_Command_With_Upgrade extends WP_CLI_Command {
 	private function status_all() {
 		$items = $this->get_all_items();
 
-		WP_CLI::line( "Installed {$this->item_type}s:" );
+		$n = count( $items );
+
+		// Not interested in the translation, just the number logic
+		WP_CLI::line( sprintf( _n( "%d installed {$this->item_type}:", "%d installed {$this->item_type}s:", $n ), $n ) );
 
 		foreach ( $items as $file => $details ) {
 			if ( $details['update'] ) {
