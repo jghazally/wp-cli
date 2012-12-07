@@ -213,6 +213,56 @@ class User_Command extends WP_CLI_Command {
 	}
 
 	/**
+	 * Add a user to a blog.
+	 *
+	 * @subcommand set-role
+	 * @synopsis <user-login> [<role>] [--blog=<blog>]
+	 */
+	public function set_role( $args, $assoc_args ) {
+		$user = self::get_user_from_first_arg( $args[0] );
+
+		$role = isset( $args[1] ) ? $args[1] : get_option( 'default_role' );
+
+		// Multisite
+		if ( function_exists( 'add_user_to_blog' ) )
+			add_user_to_blog( get_current_blog_id(), $user->ID, $role );
+		else
+			$user->set_role( $role );
+
+		WP_CLI::success( "Added {$user->user_login} ({$user->ID}) to " . site_url() . " as {$role}" );
+	}
+
+	/**
+	 * Remove a user from a blog.
+	 *
+	 * @subcommand remove-role
+	 * @synopsis <user-login>
+	 */
+	public function remove_role( $args, $assoc_args ) {
+		$user = self::get_user_from_first_arg( $args[0] );
+
+		// Multisite
+		if ( function_exists( 'remove_user_from_blog' ) )
+			remove_user_from_blog( $user->ID, get_current_blog_id() );
+		else
+			$user->remove_all_caps();
+
+		WP_CLI::success( "Removed {$user->user_login} ({$user->ID}) from " . site_url() );
+	}
+
+	private static function get_user_from_first_arg( $id_or_login ) {
+		if ( is_numeric( $id_or_login ) )
+			$user = get_user_by( 'id', $id_or_login );
+		else
+			$user = get_user_by( 'login', $id_or_login );
+
+		if ( ! $user )
+			WP_CLI::error( "Please specify a valid user ID or user login to remove from this blog" );
+
+		return $user;
+	}
+
+	/**
 	 * Import users from a CSV file.
 	 *
 	 * @subcommand import-csv
@@ -223,7 +273,7 @@ class User_Command extends WP_CLI_Command {
 		list( $csv ) = $args;
 
 		$new_users = \WP_CLI\utils\parse_csv( $csv );
-		
+
 		$blog_users = get_users();
 
 		foreach( $new_users as $new_user ) {
@@ -272,3 +322,4 @@ class User_Command extends WP_CLI_Command {
 		}
 	}
 }
+
