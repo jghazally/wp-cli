@@ -186,7 +186,7 @@ class Post_Command extends WP_CLI_Command {
 			);
 
 			// Not using wp_insert_post() because it's slow
-			$wpdb->insert( $wpdb->posts, $args );
+			wp_insert_post( $args );
 
 			$notify->tick();
 		}
