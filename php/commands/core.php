@@ -230,7 +230,7 @@ class Core_Command extends WP_CLI_Command {
 					mkdir( $dest_path );
 				}
 			} else {
-				if ( ! $item->isWritable() ) {
+				if ( $item->isWritable() ) {
 					copy( $item, $dest . DIRECTORY_SEPARATOR . $iterator->getSubPathName() );
 				} else {
 					$error = 1;
